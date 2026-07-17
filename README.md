@@ -15,13 +15,14 @@ npm install -g cldcli
 cldcli init myapp
 ```
 # Перейти в папку проекта
+```bash
 cd myapp
-
+```
 # Положить иконки в assets/
-# - icon.png
-# - icon@dark.png
-# - icon@darktransparent.png
-# - icon@transparent.png
+- icon.png
+- icon@dark.png
+- icon@darktransparent.png
+- icon@transparent.png
 
 # Собрать приложение
 ```bash
