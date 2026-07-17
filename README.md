@@ -5,7 +5,7 @@ CLI для сборки приложений ColdOS из TypeScript.
 ## Установка
 
 ```bash
-npm install -g cldcli
+npm install -g @nestorvashenko/cldcli
 ```
 
 ## Быстрый старт
