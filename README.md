@@ -1,6 +1,11 @@
 # cldcli
 
-CLI для сборки приложений ColdOS из TypeScript.
+CLI для сборки приложений [ColdOS](https://github.com/nestorvashenko/coldos).
+
+> **Важно.** ColdOS исполняет JavaScript. Приложения можно писать на других
+> языках, но `cldcli` конвертирует их в JS — это не полноценные компиляторы.
+> Для TypeScript и JavaScript поддержка нативная, для остальных языков
+> работает **ограниченное подмножество** (см. таблицу ниже).
 
 ## Установка
 
@@ -8,115 +13,136 @@ CLI для сборки приложений ColdOS из TypeScript.
 npm install -g @nestorvashenko/cldcli
 ```
 
-## Быстрый старт
+## Использование
 
 ```bash
-# Создать новый проект
-cldcli init myapp
-```
-# Перейти в папку проекта
-```bash
+cldcli init myapp --lang python
 cd myapp
-```
-# Положить иконки в assets/
-- icon.png
-- icon@dark.png
-- icon@darktransparent.png
-- icon@transparent.png
-
-# Собрать приложение
-```bash
 cldcli build
 ```
 
 ## Команды
 
-### `cldcli init <name>`
+| Команда | Описание |
+|---|---|
+| `cldcli init <name>` | Создать проект приложения |
+| `cldcli build` | Собрать `.cuapp` |
+| `cldcli langs` | Показать поддерживаемые языки |
 
-Создает новый проект ColdOS.
+### Флаги `init`
 
-**Интерактивный режим:**
-- Display name (отображаемое имя)
-- Описание приложения
-- Автор (по умолчанию: системное имя пользователя)
-- Категория (Development, Games, Utilities, etc)
+| Флаг | Описание |
+|---|---|
+| `--lang <язык>` | `ts`, `js`, `python`, `kotlin`, `go`, `php` (по умолчанию `ts`) |
+| `--desc <текст>` | Описание приложения |
+| `--author <имя>` | Автор |
+| `--category <категория>` | Категория (`Development` по умолчанию) |
 
-**Структура проекта:**
+Без флагов `cldcli init` задаёт вопросы интерактивно.
+
+## Языки
+
+| Язык | Как работает | Ограничения |
+|---|---|---|
+| `ts` | esbuild, нативно | нет |
+| `js` | нативно | нет |
+| `python` | `prpython.js` | нет классов, циклов, `try`, `async`, декораторов |
+| `kotlin` | `prkotlin.js` | нет классов, лямбд, extension-функций |
+| `go` | `prgo.js` | нет goroutine, `defer`, структур, циклов `for` |
+| `php` | `prphp.js` | нет классов, `namespace`, замыканий, `fn()` |
+
+Неподдерживаемая конструкция **не игнорируется**: сборка падает с указанием
+строки и подсказкой. Молчаливый неверный результат хуже явной ошибки.
+
+Поддерживаемое подмножество каждого языка описано в `README.md`
+соответствующего шаблона (`cuapp-python`, `cuapp-go` и т.д.).
+
+## Структура проекта
+
 ```
 myapp/
 ├── src/
-│   ├── main.ts          # Основной код приложения
-│   ├── index.css        # Стили
-│   └── coldos.d.ts      # TypeScript декларации ColdOS API
-├── assets/
-│   ├── icon.png         # Светлая иконка
-│   ├── icon@dark.png    # Темная иконка
-│   ├── icon@darktransparent.png
-│   └── icon@transparent.png
+│   ├── main.py          # код приложения (язык по --lang)
+│   ├── index.css        # стили
+│   └── coldos.d.ts      # декларации ColdOS API
+├── assets/              # иконки
 ├── package.json
-├── tsconfig.json
 └── README.md
 ```
 
-### `cldcli build`
+Иконки:
 
-Собирает приложение в пакет `.cuapp`.
+- `icon.png` — светлая
+- `icon@dark.png` — тёмная
+- `icon@darktransparent.png` — тёмная прозрачная
+- `icon@transparent.png` — прозрачная
 
-**Что делает:**
-1. Компилирует TypeScript в JavaScript с помощью esbuild
-2. Копирует CSS в папку Core
-3. Переименовывает иконки в формат `appid_*.png`
-4. Генерирует метаданные (Info.cfg, Description.txt, LICENSE)
-5. Упаковывает все в архив `.cuapp`
+## Архитектура CLI
 
-**Результат:**
+```
+src/
+├── index.js              точка входа, разбор команд
+├── cli/
+│   ├── args.js           разбор аргументов и флагов
+│   └── prompt.js         интерактивные вопросы
+├── commands/
+│   ├── init.js           создание проекта
+│   └── build.js          сборка .cuapp
+├── core/
+│   ├── logger.js         вывод в терминал
+│   └── errors.js         типы ошибок, вывод без стектрейса
+├── lang/
+│   └── index.js          реестр языков: репозиторий, entry, парсер
+├── parsers/
+│   ├── prts.js           TypeScript -> JS
+│   ├── prjs.js           JavaScript -> JS
+│   ├── prpython.js       Python -> JS
+│   ├── prkotlin.js       Kotlin -> JS
+│   ├── prgo.js           Go -> JS
+│   ├── prphp.js          PHP -> JS
+│   └── shared/
+│       ├── scanner.js    разбор строк, строк и комментариев
+│       ├── emit.js       генерация JS-литералов
+│       └── entry.js      точка входа приложения
+├── utils/
+│   ├── config.js         чтение/запись package.json
+│   └── template.js       клонирование шаблона, плейсхолдеры
+└── constants.js
+```
+
+Чтобы добавить язык: создайте `parsers/pr<lang>.js`, запись в
+`lang/index.js` и шаблон-репозиторий `cuapp-<lang>`.
+
+## Шаблоны
+
+Каждый шаблон — отдельный репозиторий:
+
+- [`cuapp-ts`](https://github.com/nestorvashenko/cuapp-ts)
+- [`cuapp-js`](https://github.com/nestorvashenko/cuapp-js)
+- [`cuapp-python`](https://github.com/nestorvashenko/cuapp-python)
+- [`cuapp-kotlin`](https://github.com/nestorvashenko/cuapp-kotlin)
+- [`cuapp-go`](https://github.com/nestorvashenko/cuapp-go)
+- [`cuapp-php`](https://github.com/nestorvashenko/cuapp-php)
+
+В шаблонах используются плейсхолдеры `__APP_ID__`, `__ENTRY_FN__`,
+`__DISPLAY_NAME__`, `__DESCRIPTION__`, `__AUTHOR__`, `__CATEGORY__`.
+`cldcli init` подставляет их при создании проекта.
+
+## Результат сборки
+
 ```
 build/
-├── myapp.cuapp          # Готовый пакет для установки
-└── unpackaged/          # Исходная структура для отладки
+├── <app_id>.cuapp        готовый пакет для установки
+└── unpackaged/
     ├── Core/
-    │   ├── myapp.js
-    │   ├── myapp.css
-    │   ├── myapp.png
-    │   ├── myapp_dark.png
-    │   ├── myapp_darktransparent.png
-    │   └── myapp_transparent.png
+    │   ├── <app_id>.js
+    │   ├── <app_id>.css
+    │   └── <app_id>*.png
     ├── Info.cfg
     ├── Description.txt
     └── LICENSE
 ```
 
-## Шаблоны
+## License
 
-Проект использует шаблон из репозитория:
-[https://github.com/nestorvashenko/cuapp-ts](https://github.com/nestorvashenko/cuapp-ts)
-
-## Требования
-
-- Node.js >= 18
-- Git (для клонирования шаблона)
-
-## Разработка
-
-```bash
-# Клонировать репозиторий
-git clone https://github.com/nestorvashenko/cldcli
-
-# Установить зависимости
-npm install
-
-# Запустить в режиме разработки
-node src/index.js init testapp
-```
-
-## Автор
-
-Nestor
-
-## Лицензия
-
-Apache 2.0
-
-## Поддержка
-
-Если у вас возникли проблемы или предложения, создайте issue на GitHub.
+MIT

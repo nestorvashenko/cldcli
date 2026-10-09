@@ -1,146 +1,188 @@
+/**
+ * Сборка приложения ColdOS.
+ *
+ * ColdOS исполняет JavaScript, поэтому для языков, отличных от JS, сначала
+ * вызывается соответствующий парсер (pr*.js), результат которого кладётся
+ * в Core/<id>.js как обычный JS.
+ */
+
 import fs from 'fs';
 import path from 'path';
 import * as esbuild from 'esbuild';
 import { version as esbuildVersion } from 'esbuild';
 import AdmZip from 'adm-zip';
-import { log } from '../utils/logger.js';
+import { log } from '../core/logger.js';
+import { CldError, ParseError, fail } from '../core/errors.js';
 import { readPackageJson } from '../utils/config.js';
+import { getLanguage } from '../lang/index.js';
+import {
+  MIN_HEIGHT,
+  MIN_WIDTH,
+  MAX_HEIGHT,
+  MAX_WIDTH,
+  COMPILER_TARGET
+} from '../constants.js';
+
+// Имя файла assets/ -> суффикс Core/<id><суффикс>.png
+const ICONS = {
+  'icon.png': '',
+  'icon@dark.png': '_dark',
+  'icon@darktransparent.png': '_darktransparent',
+  'icon@transparent.png': '_transparent'
+};
 
 export async function runBuild() {
   const projectRoot = process.cwd();
-  
-  let pkg;
-  try {
-    pkg = readPackageJson(projectRoot);
-  } catch (error) {
-    log.error('Ошибка: Файл package.json не найден.');
-    process.exit(1);
-  }
+  const pkg = readPackageJson(projectRoot);
 
   const appId = pkg.name;
+  if (!appId) throw new CldError('В package.json отсутствует поле name.');
+
+  const lang = getLanguage(pkg.lang);
+  if (!lang) throw new CldError(`Неизвестный язык в package.json: ${pkg.lang}`);
+
   const displayName = pkg.displayName || appId;
-  const appDescription = pkg.description || appId;
+  const description = pkg.description || appId;
   const author = pkg.author || 'Developer';
   const category = pkg.category || 'Development';
+  const version = pkg.version || '1.0.0';
 
-  if (appId === 'cldcli') {
-    log.warn('Перейдите в папку созданного приложения ColdOS перед сборкой.');
-    process.exit(1);
+  const entryPath = path.join(projectRoot, lang.entry);
+  if (!fs.existsSync(entryPath)) {
+    throw new CldError(
+      `Файл ${lang.entry} не найден.\n  Укажите другой язык: cldcli init --lang <${langsHint()}>`
+    );
   }
 
-  log.info(`\nКомпиляция приложения ColdOS: ${log.bold(appId)}...`);
+  log.info(`\nСборка приложения ColdOS: ${log.bold(appId)}`);
+  log.dim(`  Язык: ${lang.label} (${lang.extension})`);
 
   const buildDir = path.join(projectRoot, 'build');
   const unpackagedDir = path.join(buildDir, 'unpackaged');
   const coreDir = path.join(unpackagedDir, 'Core');
-
-  if (fs.existsSync(buildDir)) {
-    fs.rmSync(buildDir, { recursive: true, force: true });
-  }
+  fs.rmSync(buildDir, { recursive: true, force: true });
   fs.mkdirSync(coreDir, { recursive: true });
 
+  const source = fs.readFileSync(entryPath, 'utf8');
+  const ctx = { appId, displayName, packageName: lang.id };
+
+  log.cyan('  Компиляция...');
+  let code;
   try {
-    const compilerVer = `esbuild ${esbuildVersion} (TypeScript ES2022)`;
-    log.dim(`  Компилятор: ${compilerVer}`);
-
-    log.cyan('  Компилирую TypeScript...');
-    
-    const buildResult = await esbuild.build({
-      entryPoints: [path.join(projectRoot, 'src', 'main.ts')],
-      bundle: false,
-      write: false,
-      target: 'es2022',
-      minify: false,
-      charset: 'utf8',
-    });
-
-    let code = buildResult.outputFiles[0].text;
-    code = code.replace(/^\s*\(\s*\(\s*\)\s*=>\s*\{/, '');
-    code = code.replace(/}\s*\)\s*\(\s*\)\s*;\s*$/, '');
-    code = code.replace(/^\/\/.*\n/gm, '');
-    code = code.trim();
-
-    if (!code.includes(`function user_run_application_${appId}()`)) {
-      log.warn(`Предупреждение: функция user_run_application_${appId} не найдена в коде!`);
-    }
-
-    code = code.replace(/\{\{COMPILER_VER\}\}/g, compilerVer);
-
-    fs.writeFileSync(path.join(coreDir, `${appId}.js`), code);
-    log.success(`  JS собран в unpackaged/Core/${appId}.js`);
-
-    const srcCss = path.join(projectRoot, 'src', 'index.css');
-    if (fs.existsSync(srcCss)) {
-      fs.copyFileSync(srcCss, path.join(coreDir, `${appId}.css`));
-      log.success(`  CSS скопирован в Core/${appId}.css`);
-    } else {
-      fs.writeFileSync(path.join(coreDir, `${appId}.css`), '');
-    }
-
-    log.cyan('  Обрабатываю иконки...');
-    const assetsDir = path.join(projectRoot, 'assets');
-    const imageMap = {
-      'icon.png': `${appId}.png`,
-      'icon@dark.png': `${appId}_dark.png`,
-      'icon@darktransparent.png': `${appId}_darktransparent.png`,
-      'icon@transparent.png': `${appId}_transparent.png`,
-    };
-
-    let iconsFound = 0;
-    if (fs.existsSync(assetsDir)) {
-      Object.entries(imageMap).forEach(([srcName, targetName]) => {
-        const srcPath = path.join(assetsDir, srcName);
-        if (fs.existsSync(srcPath) && fs.statSync(srcPath).size > 0) {
-          fs.copyFileSync(srcPath, path.join(coreDir, targetName));
-          iconsFound++;
-          log.dim(`    ${srcName} -> Core/${targetName}`);
-        }
-      });
-    }
-
-    if (iconsFound === 0) {
-      log.warn('Предупреждение: иконки не найдены в assets/');
-      log.dim('    Положите icon.png, icon@dark.png в папку assets/ и пересоберите');
-    } else {
-      log.success(`  Иконки скопированы в Core/ (${iconsFound} файлов)`);
-    }
-
-    log.cyan('  Создаю метаданные...');
-    const infoCfg = `Name=${displayName}\nID=${appId}\nVersion=${pkg.version}.0\nAuthor=${author}\nCategory=${category}`;
-    fs.writeFileSync(path.join(unpackagedDir, 'Info.cfg'), infoCfg);
-    fs.writeFileSync(path.join(unpackagedDir, 'Description.txt'), appDescription);
-    fs.writeFileSync(path.join(unpackagedDir, 'LICENSE'), 'MIT License');
-    
-    log.success('  Метаданные созданы');
-
-    log.cyan(`\nСжатие пакета в ${appId}.cuapp...`);
-    
-    const zip = new AdmZip();
-    zip.addLocalFolder(unpackagedDir);
-    zip.writeZip(path.join(buildDir, `${appId}.cuapp`));
-
-    log.success('\nСборка успешно завершена!');
-    log.dim('Результат:');
-    log.cyan(` build/${appId}.cuapp  (Готовый пакет для установки)`);
-    log.dim(` build/unpackaged/    (Исходная структура для отладки)`);
-    log.dim('     Core/             (Все файлы приложения включая иконки)');
-    log.dim(`         ${appId}.js`);
-    log.dim(`         ${appId}.css`);
-    log.dim(`         ${appId}.png`);
-    log.dim(`         ${appId}_dark.png`);
-    log.dim(`         ${appId}_darktransparent.png`);
-    log.dim(`         ${appId}_transparent.png`);
-    log.dim('     Info.cfg');
-    log.dim('     Description.txt');
-    log.dim('     LICENSE\n');
-
-    log.success('Что дальше:');
-    log.dim('  1. Скопируйте папку build/unpackaged/Core в приложение ColdOS');
-    log.dim(`  2. Или отправьте build/${appId}.cuapp пользователю на установку\n`);
-    process.exit(0);
-
+    const parser = await lang.parser();
+    const result = await parser.parse(source, ctx);
+    code = await minifyIfNeeded(result.code, lang);
   } catch (error) {
-    log.error(`\nОшибка сборки: ${error.message}`);
-    process.exit(1);
+    fail(error);
+  }
+
+  verifyEntry(code, appId, lang);
+
+  code = code.replace(/\{\{COMPILER_VER\}\}/g, `esbuild ${esbuildVersion} (${lang.label})`);
+  fs.writeFileSync(path.join(coreDir, `${appId}.js`), code);
+  log.success(`  Core/${appId}.js`);
+
+  copyCss(projectRoot, coreDir, appId);
+  const icons = copyIcons(projectRoot, coreDir, appId);
+
+  writeMetadata(unpackagedDir, { appId, displayName, description, author, category, version });
+
+  const zip = new AdmZip();
+  zip.addLocalFolder(unpackagedDir);
+  const outFile = path.join(buildDir, `${appId}.cuapp`);
+  zip.writeZip(outFile);
+
+  report({ appId, lang, icons, outFile });
+}
+
+/**
+ * JS-парсеры уже дают исполняемый код; минификация применима только там,
+ * где esbuild может разобрать результат.
+ */
+async function minifyIfNeeded(code, lang) {
+  if (lang.id === 'js' || lang.id === 'ts') return code;
+  try {
+    const result = await esbuild.transform(code, {
+      loader: 'js',
+      target: COMPILER_TARGET,
+      minify: false,
+      charset: 'utf8'
+    });
+    return result.code;
+  } catch (error) {
+    throw new ParseError(
+      lang.id,
+      'Результат конвертации не является корректным JavaScript.',
+      error?.errors?.[0]?.text || 'Проверьте исходный файл',
+      error?.errors?.[0]?.location?.line ?? null
+    );
   }
 }
+
+function verifyEntry(code, appId, lang) {
+  const expected = `function user_run_application_${appId}(`;
+  if (!code.includes(expected)) {
+    throw new ParseError(
+      lang.id,
+      `В собранном коде нет функции user_run_application_${appId}().`,
+      'Точка входа должна называться user_run_application_<id>, где id — поле name в package.json.',
+      null
+    );
+  }
+}
+
+function copyCss(projectRoot, coreDir, appId) {
+  const css = path.join(projectRoot, 'src', 'index.css');
+  const target = path.join(coreDir, `${appId}.css`);
+  if (fs.existsSync(css)) {
+    fs.copyFileSync(css, target);
+    log.success(`  Core/${appId}.css`);
+  } else {
+    fs.writeFileSync(target, '');
+  }
+}
+
+function copyIcons(projectRoot, coreDir, appId) {
+  const assetsDir = path.join(projectRoot, 'assets');
+  let found = 0;
+
+  if (fs.existsSync(assetsDir)) {
+    for (const file of fs.readdirSync(assetsDir)) {
+      const suffix = ICONS[file];
+      if (suffix === undefined) continue;
+      const src = path.join(assetsDir, file);
+      if (fs.statSync(src).size === 0) continue;
+      fs.copyFileSync(src, path.join(coreDir, `${appId}${suffix}.png`));
+      found++;
+    }
+  }
+
+  if (found === 0) {
+    log.warn('  Иконки не найдены в assets/');
+    log.dim('    Положите icon.png и icon@dark.png, затем пересоберите');
+  }
+  return found;
+}
+
+function writeMetadata(unpackagedDir, m) {
+  const info = [
+    `Name=${m.displayName}`,
+    `ID=${m.appId}`,
+    `Version=${m.version}.0`,
+    `Author=${m.author}`,
+    `Category=${m.category}`
+  ].join('\n');
+  fs.writeFileSync(path.join(unpackagedDir, 'Info.cfg'), info + '\n');
+  fs.writeFileSync(path.join(unpackagedDir, 'Description.txt'), m.description + '\n');
+  fs.writeFileSync(path.join(unpackagedDir, 'LICENSE'), 'MIT License\n');
+}
+
+function report({ appId, lang, icons, outFile }) {
+  log.success('\nСборка завершена');
+  log.cyan(` build/${appId}.cuapp`);
+  log.dim(`   язык: ${lang.label}`);
+  log.dim(`   иконок: ${icons}/4`);
+  log.dim(`   размер: ${(fs.statSync(outFile).size / 1024).toFixed(1)} KB\n`);
+}
+
+const langsHint = () => 'ts|js|python|kotlin|go|php';

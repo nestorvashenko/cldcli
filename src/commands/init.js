@@ -1,70 +1,102 @@
+/**
+ * cldcli init — создание нового приложения ColdOS.
+ *
+ * Язык выбирается флагом --lang или в интерактивном режиме.
+ */
+
 import fs from 'fs';
 import path from 'path';
-import readline from 'readline';
 import os from 'os';
-import { log } from '../utils/logger.js';
+import { log } from '../core/logger.js';
+import { CldError, fail } from '../core/errors.js';
+import { ask } from '../cli/prompt.js';
+import { getLanguage, listLanguages, DEFAULT_LANG } from '../lang/index.js';
 import { readPackageJson, writePackageJson } from '../utils/config.js';
-import { cloneTemplate, copyTemplate, updateMainTs } from '../utils/template.js';
+import { cloneTemplate, fillProject, sanitizeAppId, entryFnName } from '../utils/template.js';
 import { DEFAULT_CATEGORY } from '../constants.js';
 
-const rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout
-});
-
-const question = (query) => new Promise((resolve) => rl.question(query, resolve));
-
-export async function runInit(appName) {
+export async function runInit(appName, flags = {}) {
   if (!appName) {
-    log.error('Ошибка: Укажите название приложения!');
-    process.exit(1);
+    throw new CldError('Укажите название приложения: cldcli init myapp');
+  }
+
+  // Валидация языка до любых файловых операций
+  let lang;
+  if (flags.lang) {
+    lang = getLanguage(String(flags.lang).toLowerCase());
+    if (!lang || String(flags.lang).toLowerCase() === 'undefined') {
+      const names = listLanguages().map((l) => l.id).join(', ');
+      throw new CldError(`Неизвестный язык "${flags.lang}".\n  Доступные: ${names}`);
+    }
   }
 
   const projectRoot = path.join(process.cwd(), appName);
   if (fs.existsSync(projectRoot)) {
-    log.error(`Ошибка: Папка ${appName} уже существует!`);
-    process.exit(1);
+    throw new CldError(`Папка ${appName} уже существует.`);
   }
 
-  log.info(`\nСоздаем новый проект ColdOS: ${log.bold(appName)}...\n`);
-
-  const displayName = await question('Display name (отображаемое имя): ') || appName;
-  const description = await question('Описание приложения: ') || `${appName} — приложение для ColdOS`;
-  const defaultAuthor = os.userInfo().username || 'Developer';
-  const author = await question(`Автор (по умолчанию: ${defaultAuthor}): `) || defaultAuthor;
-  const category = await question('Категория (Development, Games, Utilities, etc): ') || DEFAULT_CATEGORY;
-
-  rl.close();
-
-  const tempDir = path.join(os.tmpdir(), `cuapp-${Date.now()}`);
-  
-  if (!cloneTemplate(tempDir)) {
-    process.exit(1);
+  const interactive = process.stdin.isTTY && !flags.lang;
+  const questions = [];
+  if (interactive) {
+    questions.push(
+      { key: 'lang', text: `Язык (${listLanguages().map((l) => l.id).join(', ')})`, default: DEFAULT_LANG },
+      { key: 'displayName', text: 'Отображаемое имя', default: appName }
+    );
   }
 
-  copyTemplate(tempDir, projectRoot);
+  let answers = {};
+  if (questions.length) {
+    log.info(`\nСоздаём приложение ColdOS: ${log.bold(appName)}`);
+    answers = await ask(questions);
+  }
 
-  const appId = appName.toLowerCase();
+  const chosen = lang || getLanguage(answers.lang || DEFAULT_LANG);
+  const displayName = answers.displayName || flags.name || appName;
+  const description = flags.desc || `${displayName} — приложение для ColdOS`;
+  const author = flags.author || os.userInfo().username || 'Developer';
+  const category = flags.category || DEFAULT_CATEGORY;
+
+  if (!lang) log.info(`\nСоздаём приложение ColdOS: ${log.bold(appName)}`);
+  log.dim(`  Язык: ${chosen.label}`);
+  log.dim(`  ${chosen.notes}`);
+
+  cloneTemplate(chosen.repo, projectRoot);
+
+  const appId = sanitizeAppId(appName);
+
+  // Метаданные проекта
   const pkg = readPackageJson(projectRoot);
-  
   pkg.name = appId;
   pkg.displayName = displayName;
   pkg.description = description;
   pkg.author = author;
   pkg.category = category;
+  pkg.lang = chosen.id;
   writePackageJson(projectRoot, pkg);
 
-  const mainTsPath = path.join(projectRoot, 'src', 'main.ts');
-  updateMainTs(mainTsPath, appId, displayName);
+  // Плейсхолдеры в исходниках, README и стилях
+  fillProject(projectRoot, {
+    APP_ID: appId,
+    ENTRY_FN: entryFnName(appId),
+    DISPLAY_NAME: displayName,
+    DESCRIPTION: description,
+    AUTHOR: author,
+    CATEGORY: category,
+    LANG_LABEL: chosen.label
+  });
 
-  log.success(`\nПроект ${log.bold(appName)} успешно создан!`);
-  log.cyan('Следующие шаги:');
-  log.dim(`  1. cd ${appName}`);
-  log.dim('  2. Положите иконки в папку assets/');
-  log.dim('     - icon.png (обычная иконка)');
-  log.dim('     - icon@dark.png (темная тема)');
-  log.dim('     - icon@darktransparent.png (темная прозрачная)');
-  log.dim('     - icon@transparent.png (прозрачная)');
-  log.dim('  3. cldcli build');
-  console.log('');
+  success(appName, appId, chosen);
 }
+
+function success(appName, appId, lang) {
+  log.success(`\nПроект ${log.bold(appName)} создан (${lang.label})`);
+  log.cyan('\nСледующие шаги:');
+  log.dim(`  1. cd ${appName}`);
+  log.dim('  2. Положите иконки в assets/:');
+  log.dim('     icon.png, icon@dark.png,');
+  log.dim('     icon@darktransparent.png, icon@transparent.png');
+  log.dim('  3. Откройте src/' + path.basename(lang.entry) + ' и напишите приложение');
+  log.dim('  4. cldcli build\n');
+}
+
+export { fail };
