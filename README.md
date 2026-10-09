@@ -69,12 +69,15 @@ cldcli build
 myapp/
 ├── src/
 │   ├── main.py          # код приложения (язык по --lang)
-│   ├── index.css        # стили
-│   └── coldos.d.ts      # декларации ColdOS API
+│   └── index.css        # стили
 ├── assets/              # иконки
 ├── package.json
 └── README.md
 ```
+
+В шаблонах `ts` и `js` дополнительно лежит `src/coldos.d.ts` — декларации
+ColdOS API для автодополнения в редакторе. В остальных языках он не нужен,
+поэтому в шаблоны не входит.
 
 Иконки:
 
