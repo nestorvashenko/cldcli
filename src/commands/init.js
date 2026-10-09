@@ -35,28 +35,54 @@ export async function runInit(appName, flags = {}) {
     throw new CldError(`Папка ${appName} уже существует.`);
   }
 
-  const interactive = process.stdin.isTTY && !flags.lang;
+  // Флаг --lang отвечает только на вопрос о языке.
+  // Метаданные спрашиваются всегда, иначе приложение молча получило бы
+  // description/author/category по умолчанию.
+  const interactive = Boolean(process.stdin.isTTY);
   const questions = [];
-  if (interactive) {
-    questions.push(
-      { key: 'lang', text: `Язык (${listLanguages().map((l) => l.id).join(', ')})`, default: DEFAULT_LANG },
-      { key: 'displayName', text: 'Отображаемое имя', default: appName }
-    );
+
+  if (!lang) {
+    questions.push({
+      key: 'lang',
+      text: `Язык (${listLanguages().map((l) => l.id).join(', ')})`,
+      default: DEFAULT_LANG
+    });
+  }
+  if (!flags.name) {
+    questions.push({ key: 'displayName', text: 'Отображаемое имя', default: appName });
+  }
+  if (!flags.desc) {
+    questions.push({
+      key: 'description',
+      text: 'Описание приложения',
+      default: (a) => `${a.displayName || appName} — приложение для ColdOS`
+    });
+  }
+  if (!flags.author) {
+    questions.push({
+      key: 'author',
+      text: 'Автор',
+      default: os.userInfo().username || 'Developer'
+    });
+  }
+  if (!flags.category) {
+    questions.push({ key: 'category', text: 'Категория', default: DEFAULT_CATEGORY });
   }
 
   let answers = {};
-  if (questions.length) {
+  if (interactive && questions.length) {
     log.info(`\nСоздаём приложение ColdOS: ${log.bold(appName)}`);
     answers = await ask(questions);
+  } else {
+    log.info(`\nСоздаём приложение ColdOS: ${log.bold(appName)}`);
   }
 
   const chosen = lang || getLanguage(answers.lang || DEFAULT_LANG);
   const displayName = answers.displayName || flags.name || appName;
-  const description = flags.desc || `${displayName} — приложение для ColdOS`;
-  const author = flags.author || os.userInfo().username || 'Developer';
-  const category = flags.category || DEFAULT_CATEGORY;
+  const description = answers.description || flags.desc || `${displayName} — приложение для ColdOS`;
+  const author = answers.author || flags.author || os.userInfo().username || 'Developer';
+  const category = answers.category || flags.category || DEFAULT_CATEGORY;
 
-  if (!lang) log.info(`\nСоздаём приложение ColdOS: ${log.bold(appName)}`);
   log.dim(`  Язык: ${chosen.label}`);
   log.dim(`  ${chosen.notes}`);
 

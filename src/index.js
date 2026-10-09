@@ -32,9 +32,10 @@ function showLangs() {
 function help() {
   log.cyan('\ncldcli — сборка приложений ColdOS\n');
   log.info('  cldcli init <name> [--lang <язык>]');
-  log.dim('    --lang    ts | js | python | kotlin | go | php');
-  log.dim('    --desc    описание приложения');
-  log.dim('    --author  автор');
+  log.dim('    --lang     ts | js | python | kotlin | go | php');
+  log.dim('    --name     отображаемое имя');
+  log.dim('    --desc     описание приложения');
+  log.dim('    --author   автор');
   log.dim('    --category категория');
   log.info('  cldcli build');
   log.info('  cldcli langs');
